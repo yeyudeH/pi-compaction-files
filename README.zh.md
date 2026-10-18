@@ -25,16 +25,20 @@ Pi 官方文档把这种增长写成了预期行为（`docs/compaction.md` → �
 ## 安装
 
 ```bash
-pi install npm:@yeyudeH/pi-compaction-files
-# 或直接从 git
+pi install npm:@yeyudeh/pi-compaction-files
+
+# 或直接从 git —— 这种跟的是 main 分支
 pi install git:github.com/yeyudeH/pi-compaction-files
 ```
 
 先试一次不安装：
 
 ```bash
-pi -e npm:@yeyudeH/pi-compaction-files
+pi -e npm:@yeyudeh/pi-compaction-files
 ```
+
+两种都在 Pi 0.37 上实测过：扩展加载，stderr 打 `self-check ok`。
+git 形式跟 `main`；要固定在某个版本用 `pi install git:github.com/yeyudeH/pi-compaction-files#v0.2.0`。
 
 确认已加载：
 

@@ -40,7 +40,8 @@ something in the tens of kilobytes.
 ## 1. Install and restart
 
 ```bash
-pi install npm:@yeyudeH/pi-compaction-files
+pi install npm:@yeyudeh/pi-compaction-files
+# or: pi install git:github.com/yeyudeH/pi-compaction-files
 ```
 
 **Restart Pi.** Extensions load at process start; installing does not affect the running
@@ -152,7 +153,7 @@ reason.
 PI_FILELIST_DISABLE=1 pi
 
 # permanently
-pi remove @yeyudeH/pi-compaction-files
+pi remove @yeyudeh/pi-compaction-files
 ```
 
 Nothing needs cleaning up afterwards. The extension never modified your session file, and

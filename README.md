@@ -28,16 +28,21 @@ That last sentence is the documented contract this extension uses. It is not a m
 ## Install
 
 ```bash
-pi install npm:@yeyudeH/pi-compaction-files
-# or straight from git
+pi install npm:@yeyudeh/pi-compaction-files
+
+# or straight from git — this one tracks `main`
 pi install git:github.com/yeyudeH/pi-compaction-files
 ```
 
 Try it for a single run without installing:
 
 ```bash
-pi -e npm:@yeyudeH/pi-compaction-files
+pi -e npm:@yeyudeh/pi-compaction-files
 ```
+
+Both forms were verified end to end on Pi 0.37: the extension loads and logs
+`self-check ok` on stderr. Pin a git release with
+`pi install git:github.com/yeyudeH/pi-compaction-files#v0.2.0`.
 
 Then check it is loaded:
 
