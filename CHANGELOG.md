@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-10-18
+
+### Fixed
+- Documentation only. The 0.2.0 tarball shipped the pre-release install section, which
+  still said the npm package would be available "once … on the npm registry". 0.2.1
+  carries the current install instructions (`pi install npm:@yeyudeh/pi-compaction-files`,
+  with the git form as the alternative). No code changed between 0.2.0 and 0.2.1.
+
 ## [0.2.0] - 2026-10-18
 
 ### Added
