@@ -1,0 +1,8 @@
+node_modules/
+.cache/
+.test-home*/
+*.log
+*.tgz
+.DS_Store
+# author-specific privacy patterns (must never be published)
+

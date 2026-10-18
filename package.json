@@ -1,0 +1,53 @@
+{
+  "name": "@yeyudeH/pi-compaction-files",
+  "version": "0.2.0",
+  "description": "Caps Pi's compaction file lists (<read-files>/<modified-files>): drops dead, duplicate and temp paths, hides sensitive ones, strips blocks the summarizer re-seeds into the narrative, and keeps the cost per turn constant.",
+  "keywords": [
+    "pi",
+    "pi-package",
+    "pi-extension",
+    "compaction",
+    "context",
+    "tokens",
+    "context-window"
+  ],
+  "type": "module",
+  "license": "MIT",
+  "author": "",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yeyudeH/pi-compaction-files.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yeyudeH/pi-compaction-files/issues"
+  },
+  "homepage": "https://github.com/yeyudeH/pi-compaction-files#readme",
+  "files": [
+    "extensions",
+    "docs",
+    "scripts",
+    "README.md",
+    "README.zh.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "jiti": "^2.7.0"
+  },
+  "scripts": {
+    "test": "node test/harness.mjs",
+    "test:session": "node test/harness.mjs",
+    "test:plugin": "node test/plugin-load.mjs",
+    "privacy": "node scripts/privacy-check.mjs",
+    "check": "node scripts/privacy-check.mjs && node test/harness.mjs && node test/plugin-load.mjs"
+  }
+}
