@@ -265,10 +265,10 @@ export default function (pi: ExtensionAPI) {
 			const modelKey = `${model.provider}/${model.id}`;
 			const preferred = streamMode.get(modelKey);
 			// Output budget: Pi caps the summarisation reply — reasoning and summary together —
-			// at 0.8*reserveTokens. On a long-running session the last four replies ran at
-			// 92-95% of that ceiling; one more step and the reply is cut off mid-summary
-			// (stopReason=length), which costs a full retry (~230k input tokens). Aim below the
-			// ceiling instead of at it.
+			// at 0.8*reserveTokens. On a long-running session the reply repeatedly landed within
+			// a few percent of that ceiling; one more step and it is cut off mid-summary
+			// (stopReason=length), which costs a full retry of the whole conversation. Aim below
+			// the ceiling instead of at it.
 			const reserve = Number(event.preparation?.settings?.reserveTokens) || 0;
 			const modelCap = model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY;
 			const outCap = Math.min(Math.floor(0.8 * reserve), modelCap);

@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-10-20
+
+### Changed
+- Documentation and comments only. The 0.3.0 notes quoted measurements from one developer's
+  own session (compaction counts, token ceilings, retry durations). Those numbers are now
+  phrased generically; the mechanism and the `0.8 * reserveTokens` relationship are
+  unchanged. No code changed between 0.3.0 and 0.3.1.
+
 ## [0.3.0] - 2026-10-20
 
 ### Added
@@ -15,8 +23,9 @@ All notable changes to this project are documented here. The format follows
   no Pi or server configuration is touched.
 - **A hard output ceiling.** `outputHardCapRatio` (default `0.9`) lowers the ceiling the
   inference server enforces *for this request* to 90% of Pi's own cap, by rewriting the
-  `reserveTokens` handed to `compact()` (Pi computes `max_tokens = 0.8 * reserveTokens`, so
-  34079 → 30670 gives 27263 → 24536). Reasoning plus summary can no longer reach the cap at
+  `reserveTokens` handed to `compact()` — Pi computes `max_tokens = 0.8 * reserveTokens`,
+  so the allowance is scaled down by the same factor. Reasoning plus summary can no longer
+  reach the cap at
   all, so the truncation that triggers Pi's full retry cannot happen. Only this call's
   argument changes; no Pi or server configuration is touched. `0` leaves Pi's ceiling alone.
   If the soft budget would land above the hard line, it is pulled down to 90% of it.
@@ -36,13 +45,13 @@ All notable changes to this project are documented here. The format follows
   tests; the default path is unchanged).
 
 ### Why
-Measured on this machine's long-running session (121 compactions): the summarisation reply
-is capped at 27,263 tokens, and the last four ran at 92-95% of that (25,326-25,965);
-31 of 121 exceeded 85% of the cap. One went over and came back as
-`done: 27263 tokens ... (stopReason=length)` — cut off mid-summary, which triggers Pi's
-compact-and-retry: ~230k input tokens and ~10 minutes, and that window is where an
-interruption turns into a failed compaction. `reasoning` was 0 in every recorded
-compaction, so the cap is consumed by the summary itself.
+On a long-running session, the summarisation reply repeatedly landed within a few percent of
+Pi's output ceiling, and one reply went over and came back cut off mid-summary
+(`stopReason=length`). That triggers Pi's compact-and-retry: the whole conversation is
+re-sent and the run takes minutes — and that window is where an interruption turns into a
+failed compaction. In every recorded compaction inspected, `reasoning` was 0, so the
+ceiling is consumed by the summary itself. Capping the reply below the ceiling removes the
+trigger instead of raising the ceiling.
 
 ## [0.2.1] - 2026-10-18
 
