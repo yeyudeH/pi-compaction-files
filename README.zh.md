@@ -117,6 +117,12 @@ Pi 会把完整清单写进 compaction 条目的 `details`（不渲染进上下�
   "dropMissing": true,
   "indexRecent": 12,
   "archiveSensitive": false,
+  "compactThinking": "medium",
+  "outputBudgetRatio": 0.8,
+  "outputHardCapRatio": 0.9,
+  "retryOnOverflow": true,
+  "summaryMaxTokens": 0,
+  "summaryHardTrim": false,
   "excludePatterns": ["/tmp/", "/dev/shm/", "/node_modules/", "/.cache/", "/proc/", "/sys/"],
   "sensitivePatterns": ["/credential", "/secret", "/token", ".key", "/password", "apikey", "/.pi/agent/settings.json", "/.pi/agent/models.json"],
   "piDistDir": null
@@ -134,6 +140,12 @@ Pi 会把完整清单写进 compaction 条目的 `details`（不渲染进上下�
 | `dropMissing` | `true` | 丢掉已不存在的路径 |
 | `archiveSensitive` | `false` | `false` = 敏感形态路径连磁盘存档也剔掉 |
 | `excludePatterns` | 见上 | 命中即整条丢弃 |
+| `compactThinking` | `medium` | 压缩请求自己用的思考强度，不再沿用会话级别 |
+| `outputBudgetRatio` | `0.8` | 压缩请求的**总输出**（思考 + 摘要）应落在 Pi 自身上限（`0.8 × reserveTokens`）的这个比例内。`0` 表示不限制 |
+| `outputHardCapRatio` | `0.9` | 把推理服务对这次请求强制执行的输出上限压到 Pi 上限的这个比例，思考+摘要再也撞不到天花板。`0` 表示不动 Pi 的原上限 |
+| `retryOnOverflow` | `true` | 实际用量超过预算时，用更严的指令 + 降一档思考重做一次，取更省的那次 |
+| `summaryMaxTokens` | `0` | 可选的第二道限制，只管摘要正文（字符数/4）。`0` 表示关闭；主控是 `outputBudgetRatio` |
+| `summaryHardTrim` | `false` | 清单收到最紧之后摘要还是超上限时，是否连正文一起裁掉（默认只收紧清单并告警） |
 | `sensitivePatterns` | 见上 | 命中即计数但不列出。**请把你自己的私密目录加进来** |
 | `piDistDir` | 自动 | 自检找不到 Pi `dist/` 时才需要；也支持环境变量 `PI_CODING_AGENT_DIST` |
 

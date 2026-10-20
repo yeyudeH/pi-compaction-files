@@ -5,4 +5,5 @@ node_modules/
 *.tgz
 .DS_Store
 # author-specific privacy patterns (must never be published)
+scripts/privacy-extra.txt
 

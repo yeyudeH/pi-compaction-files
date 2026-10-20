@@ -39,6 +39,7 @@ import {
 	DEFAULT_OPTIONS,
 	hasFileBlocks,
 	pathMatchesAny,
+	piTokens,
 	realFs,
 	rewriteSummary,
 	type FileListOptions,
@@ -55,6 +56,35 @@ interface Config extends FileListOptions {
 	archiveSensitive: boolean;
 	/** Explicit Pi dist/ dir for the self-check (usually unnecessary). */
 	piDistDir?: string;
+	/** Thinking level for the summarisation request itself. Pi would otherwise reuse the
+	 *  session's level, and reasoning competes with the summary for the same output budget
+	 *  (Pi caps that request at 0.8*reserveTokens). Default "medium". */
+	compactThinking: string;
+	/** Fraction of Pi's own output ceiling (0.8*reserveTokens) that the whole summarisation
+	 *  reply — reasoning plus summary — should stay inside. Default 0.8; 0 disables. */
+	outputBudgetRatio: number;
+	/** Lower the ceiling the inference server enforces for this request to this share of Pi's
+	 *  own cap (0.8*reserveTokens), so reasoning+summary can never reach it. Default 0.9;
+	 *  0 leaves Pi's ceiling untouched. */
+	outputHardCapRatio: number;
+	/** When the reply used more than the budget, redo it once with tighter instructions and
+	 *  one step lower thinking. Cheaper than Pi's full compact-and-retry. Default true. */
+	retryOnOverflow: boolean;
+	/** Optional second ceiling on the summary text alone, in Pi's token metric (chars/4).
+	 *  Default 0 (off) — outputBudgetRatio is the primary control. */
+	summaryMaxTokens: number;
+	/** When the summary text itself still exceeds summaryMaxTokens after the file lists
+	 *  have been tightened, cut the prose (default false: tighten lists and warn). */
+	summaryHardTrim: boolean;
+}
+
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+/** One step down the thinking ladder, never below "minimal". */
+function stepDownThinking(level: string): string {
+	const i = THINKING_LEVELS.indexOf(level);
+	if (i <= 1) return THINKING_LEVELS[1];
+	return THINKING_LEVELS[Math.max(1, i - 1)];
 }
 
 /** How many consecutive hook failures before we stop trying (Pi handles it). */
@@ -62,20 +92,51 @@ const MAX_FAIL_STREAK = 2;
 
 const CONFIG_PATH = join(homedir(), ".pi", "pi-compaction-files.json");
 
+/** Config file location. PI_COMPACTION_FILES_CONFIG points it elsewhere (used by the
+ *  isolated tests, where HOME is fixed at module-load time by the loader). */
+function configFile(): string {
+	const over = process.env.PI_COMPACTION_FILES_CONFIG;
+	return typeof over === "string" && over.trim() ? over.trim() : CONFIG_PATH;
+}
+
 function loadConfig(): Config {
-	const base: Config = { enabled: true, tool: false, archiveSensitive: false, ...DEFAULT_OPTIONS };
+	const base: Config = {
+		enabled: true,
+		tool: false,
+		archiveSensitive: false,
+		compactThinking: "medium",
+		outputBudgetRatio: 0.8,
+		outputHardCapRatio: 0.9,
+		retryOnOverflow: true,
+		summaryMaxTokens: 0,
+		summaryHardTrim: false,
+		...DEFAULT_OPTIONS,
+	};
 	if (process.env.PI_FILELIST_DISABLE === "1") {
 		base.enabled = false;
 		return base;
 	}
 	try {
-		if (!existsSync(CONFIG_PATH)) return base;
-		const raw = JSON.parse(readFileSync(CONFIG_PATH, "utf-8")) as Partial<Config>;
+		const cfgFile = configFile();
+		if (!existsSync(cfgFile)) return base;
+		const raw = JSON.parse(readFileSync(cfgFile, "utf-8")) as Partial<Config>;
 		return {
 			enabled: raw.enabled !== false,
 			tool: raw.tool === true,
 			archiveSensitive: raw.archiveSensitive === true,
 			piDistDir: typeof raw.piDistDir === "string" && raw.piDistDir ? raw.piDistDir : undefined,
+			compactThinking: THINKING_LEVELS.includes(String(raw.compactThinking)) ? String(raw.compactThinking) : base.compactThinking,
+			outputBudgetRatio: typeof raw.outputBudgetRatio === "number" && raw.outputBudgetRatio >= 0 && raw.outputBudgetRatio <= 1
+				? raw.outputBudgetRatio
+				: base.outputBudgetRatio,
+			outputHardCapRatio: typeof raw.outputHardCapRatio === "number" && raw.outputHardCapRatio >= 0 && raw.outputHardCapRatio <= 1
+				? raw.outputHardCapRatio
+				: base.outputHardCapRatio,
+			retryOnOverflow: raw.retryOnOverflow !== false,
+			summaryMaxTokens: Number.isSafeInteger(raw.summaryMaxTokens) && (raw.summaryMaxTokens as number) >= 0
+				? (raw.summaryMaxTokens as number)
+				: base.summaryMaxTokens,
+			summaryHardTrim: raw.summaryHardTrim === true,
 			style: raw.style === "index" ? "index" : "native",
 			indexRecent: Number.isSafeInteger(raw.indexRecent) && (raw.indexRecent as number) >= 0 ? (raw.indexRecent as number) : base.indexRecent,
 			keepModified: Number.isSafeInteger(raw.keepModified) ? (raw.keepModified as number) : base.keepModified,
@@ -203,15 +264,64 @@ export default function (pi: ExtensionAPI) {
 				ctx.modelRegistry.stream(m as never, c as never, o as never);
 			const modelKey = `${model.provider}/${model.id}`;
 			const preferred = streamMode.get(modelKey);
-			const doCompact = (useStream: boolean) =>
+			// Output budget: Pi caps the summarisation reply — reasoning and summary together —
+			// at 0.8*reserveTokens. On a long-running session the last four replies ran at
+			// 92-95% of that ceiling; one more step and the reply is cut off mid-summary
+			// (stopReason=length), which costs a full retry (~230k input tokens). Aim below the
+			// ceiling instead of at it.
+			const reserve = Number(event.preparation?.settings?.reserveTokens) || 0;
+			const modelCap = model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY;
+			const outCap = Math.min(Math.floor(0.8 * reserve), modelCap);
+			const budget =
+				config.outputBudgetRatio > 0 && Number.isFinite(outCap) && outCap > 0
+					? Math.floor(outCap * config.outputBudgetRatio)
+					: 0;
+			// Hard ceiling: shrink the allowance handed to *this* request so the inference server
+			// itself stops at hardCap. Pi computes
+			// max_tokens = min(floor(0.8 * settings.reserveTokens), model.maxTokens), so the
+			// allowance is ceil(hardCap / 0.8). Only this call argument changes; no Pi or server
+			// configuration file is touched.
+			const hardCap =
+				config.outputHardCapRatio > 0 && Number.isFinite(outCap) && outCap > 0
+					? Math.floor(outCap * Math.min(config.outputHardCapRatio, 1))
+					: 0;
+			let hardCapApplied = 0;
+			if (hardCap > 0 && hardCap < outCap && event.preparation?.settings) {
+				const need = Math.ceil(hardCap / 0.8);
+				const before = Number(event.preparation.settings.reserveTokens) || 0;
+				if (before > need) {
+					event.preparation.settings.reserveTokens = need;
+					hardCapApplied = hardCap;
+					log(`hard output cap for this request: max_tokens ${outCap} → ${hardCap} (reserveTokens ${before} → ${need})`);
+				}
+			}
+			// The soft budget must stay under the hard line; otherwise the model gets truncated
+			// instead of finishing with headroom.
+			const effBudget = hardCapApplied > 0 && budget >= hardCapApplied ? Math.floor(hardCapApplied * 0.9) : budget;
+			const textCap = config.summaryMaxTokens;
+			const thinkBudget = effBudget > 0 ? Math.floor(effBudget * 0.2) : 0;
+			const focusFor = (tighter: boolean): string =>
+				[
+					event.customInstructions,
+					effBudget > 0
+						? `Hard limit: your ENTIRE reply for this summarisation — reasoning plus summary — must fit within ${effBudget} tokens. Budget at most ${thinkBudget} tokens of reasoning and ${effBudget - thinkBudget} tokens of summary text. Finish well inside the limit: a reply cut off mid-summary forces an expensive full retry.`
+						: "",
+					textCap > 0
+						? `The summary text itself should stay under ${textCap} tokens (roughly ${textCap * 4} characters). If something must be dropped, drop older narrative detail first; keep the current goal, open issues, decisions, and next steps.`
+					: "",
+					tighter ? "This is a second attempt: be markedly more concise than you would otherwise be, and leave clear headroom under the limit." : "",
+				]
+					.filter(Boolean)
+					.join("\n");
+			const doCompact = (useStream: boolean, focusText: string, thinking: string) =>
 				compact(
 					event.preparation,
 					model,
 					auth.apiKey,
 					auth.headers,
-					event.customInstructions,
+					focusText || undefined,
 					event.signal,
-					ctx.thinkingLevel,
+					thinking as never,
 					useStream ? (streamFn as never) : undefined,
 					auth.env,
 				);
@@ -219,13 +329,39 @@ export default function (pi: ExtensionAPI) {
 			// One attempt on the remembered path; one fallback at most. We never retry
 			// both paths every time — that would silently double the summarisation cost.
 			try {
-				result = await doCompact(preferred !== "default");
+				result = await doCompact(preferred !== "default", focusFor(false), config.compactThinking);
 				if (!preferred) streamMode.set(modelKey, "stream");
 			} catch (err) {
 				if (preferred === "default") throw err;
 				log(`stream path failed (${String(err)}); retrying with default completion`);
-				result = await doCompact(false);
+				result = await doCompact(false, focusFor(false), config.compactThinking);
 				streamMode.set(modelKey, "default");
+			}
+			// What the reply actually used (reasoning + summary). `usage` keeps output and
+			// reasoning as separate counters, so both have to be added.
+			const usedOf = (r: { usage?: { output?: number; reasoning?: number } }): number =>
+				Number(r?.usage?.output || 0) + Number(r?.usage?.reasoning || 0);
+			let used = usedOf(result);
+			let attempts = 1;
+			if (effBudget > 0 && used > effBudget && config.retryOnOverflow && !event.signal?.aborted) {
+				const lower = stepDownThinking(config.compactThinking);
+				log(
+					`summary reply used ${used} tokens, over the ${effBudget}-token budget (hard cap ${hardCapApplied || outCap}); retrying with tighter instructions and thinking=${lower}`,
+				);
+				try {
+					const again = await doCompact(preferred !== "default", focusFor(true), lower);
+					const used2 = usedOf(again);
+					if (used2 > 0 && used2 < used) {
+						result = again;
+						used = used2;
+						attempts = 2;
+						log(`retry used ${used} tokens (within budget: ${used <= effBudget})`);
+					} else {
+						log(`retry used ${used2} tokens, not better; keeping the first result`);
+					}
+				} catch (err) {
+					log(`overflow retry failed (${String(err)}); keeping the first result`);
+				}
 			}
 			const details = (result.details ?? {}) as { readFiles?: string[]; modifiedFiles?: string[] };
 			const fullRead = Array.isArray(details.readFiles) ? details.readFiles : [];
@@ -257,7 +393,37 @@ export default function (pi: ExtensionAPI) {
 			const archiveHiddenTotal = archivedHidden + readDes.hidden;
 
 			const rw = rewrite(result.summary, ctx.cwd, `compact(${event.reason})`);
-			if (rw.changed) result.summary = rw.summary;
+			let out = rw.changed ? rw.summary : result.summary;
+			let stats = rw.stats;
+			let over = textCap > 0 ? piTokens(out) - textCap : 0;
+			// Over budget: tighten the file lists first — the plugin owns those — before ever
+			// touching the prose. rewriteSummary is called directly to bypass the rewrite()
+			// cache, whose key does not include the keep values.
+			const tightened: number[] = [];
+			for (const k of [20, 10, 0]) {
+				if (over <= 0) break;
+				const t = rewriteSummary(result.summary, { ...config, keepRead: k, keepModified: k }, ctx.cwd, realFs);
+				if (t.summary === out && k === 0) break;
+				out = t.summary;
+				stats = t.stats;
+				tightened.push(k);
+				over = textCap > 0 ? piTokens(out) - textCap : 0;
+			}
+			const summaryTokens = piTokens(out);
+			if (over > 0) {
+				if (config.summaryHardTrim) {
+					const chars = textCap * 4;
+					out = `${out.slice(0, chars)}\n\n[pi-compaction-files: summary trimmed to the ${textCap}-token cap]`;
+					log(`summary ${summaryTokens} tokens, ${over} over the ${textCap} cap → hard-trimmed (summaryHardTrim=true)`);
+				} else {
+					log(
+						`WARNING: summary is ${summaryTokens} tokens, ${over} over the ${textCap} cap. File lists tightened to ${
+							tightened.join("/") || "unchanged"
+						}; prose left intact (set summaryHardTrim=true to cut it).`,
+					);
+				}
+			}
+			result.summary = out;
 			// Keep the inventory where Pi never renders it, so session_files can answer —
 			// written whether or not the summary text needed changing.
 			result.details = {
@@ -265,18 +431,30 @@ export default function (pi: ExtensionAPI) {
 				readFiles: mergedRead.list,
 				modifiedFiles: mergedModified.list,
 				fileListIndex: {
-					keptRead: rw.stats.keptRead,
-					keptModified: rw.stats.keptModified,
-					droppedMissing: rw.stats.droppedMissing,
-					droppedExcluded: rw.stats.droppedExcluded,
-					droppedDuplicate: rw.stats.droppedDuplicate,
-					hiddenSensitive: rw.stats.hiddenSensitive,
+					keptRead: stats.keptRead,
+					keptModified: stats.keptModified,
+					droppedMissing: stats.droppedMissing,
+					droppedExcluded: stats.droppedExcluded,
+					droppedDuplicate: stats.droppedDuplicate,
+					hiddenSensitive: stats.hiddenSensitive,
 					mergedReadTotal: mergedRead.list.length,
 					mergedModifiedTotal: mergedModified.list.length,
 					mergedOverflow: mergedRead.overflow + mergedModified.overflow,
-					blocksFound: rw.stats.blocksFound,
+					blocksFound: stats.blocksFound,
 					archiveHidden: archiveHiddenTotal,
 					archiveSensitiveKept: config.archiveSensitive,
+					summaryTokens,
+					summaryMaxTokens: textCap,
+					summaryOver: over > 0 ? over : 0,
+					summaryHardTrim: config.summaryHardTrim,
+					listsTightenedTo: tightened.length ? tightened[tightened.length - 1] : null,
+					compactThinking: config.compactThinking,
+					outputUsed: used,
+					outputBudget: effBudget,
+					outputHardCap: hardCapApplied || null,
+					outputCap: Number.isFinite(outCap) ? outCap : null,
+					outputOverBudget: effBudget > 0 && used > effBudget ? used - effBudget : 0,
+					attempts,
 				},
 			};
 			failStreak = 0;
@@ -410,6 +588,7 @@ export default function (pi: ExtensionAPI) {
 		handler: async (_args: string, ctx) => {
 			const lines = [
 				`enabled=${config.enabled} style=${config.style} keepModified=${config.keepModified} keepRead=${config.keepRead} dropMissing=${config.dropMissing}`,
+				`compactThinking=${config.compactThinking} outputBudgetRatio=${config.outputBudgetRatio} outputHardCapRatio=${config.outputHardCapRatio} retryOnOverflow=${config.retryOnOverflow} summaryMaxTokens=${config.summaryMaxTokens} summaryHardTrim=${config.summaryHardTrim}`,
 				`archiveSensitive=${config.archiveSensitive} tool=${config.tool} indexRecent=${config.indexRecent} failStreak=${failStreak}/${MAX_FAIL_STREAK}`,
 				`exclude=[${config.excludePatterns.join(", ")}]`,
 				`cache=${cache.size} streamMode=[${[...streamMode.entries()].map(([m, s]) => `${m}:${s}`).join(", ")}]`,

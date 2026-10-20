@@ -4,6 +4,46 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-10-20
+
+### Added
+- **An output budget for the summarisation request.** Pi caps that request — reasoning and
+  summary together — at `0.8 * reserveTokens`. The plugin now aims below it instead of at
+  it: `outputBudgetRatio` (default `0.8`) sets the share of that ceiling the whole reply
+  should fit inside, and the split between reasoning and summary text is spelled out in the
+  instructions. The budget follows `reserveTokens` and the model's own limit automatically;
+  no Pi or server configuration is touched.
+- **A hard output ceiling.** `outputHardCapRatio` (default `0.9`) lowers the ceiling the
+  inference server enforces *for this request* to 90% of Pi's own cap, by rewriting the
+  `reserveTokens` handed to `compact()` (Pi computes `max_tokens = 0.8 * reserveTokens`, so
+  34079 → 30670 gives 27263 → 24536). Reasoning plus summary can no longer reach the cap at
+  all, so the truncation that triggers Pi's full retry cannot happen. Only this call's
+  argument changes; no Pi or server configuration is touched. `0` leaves Pi's ceiling alone.
+  If the soft budget would land above the hard line, it is pulled down to 90% of it.
+- **Overflow retry.** If the reply still used more than the budget, the plugin redoes the
+  request once with tighter instructions and one step lower thinking (`retryOnOverflow`,
+  default true), and keeps whichever result was cheaper. That is far cheaper than Pi's own
+  recovery, which re-sends the whole conversation.
+- The summarisation request now runs at its own thinking level (`compactThinking`, default
+  `medium`) instead of inheriting the session's.
+- Optional second ceiling on the summary text alone (`summaryMaxTokens`, default `0` = off).
+  When it bites, the file lists are tightened first (60/40 → 20/20 → 10/10 → 0); prose is
+  only cut with `summaryHardTrim: true`.
+- `details.fileListIndex` now records `outputUsed`, `outputBudget`, `outputHardCap`, `outputCap`,
+  `outputOverBudget`, `attempts`, `summaryTokens`, `summaryOver` and `listsTightenedTo`, so
+  what one compaction actually cost is readable from the session file.
+- `PI_COMPACTION_FILES_CONFIG` points the config file elsewhere (used by the isolated
+  tests; the default path is unchanged).
+
+### Why
+Measured on this machine's long-running session (121 compactions): the summarisation reply
+is capped at 27,263 tokens, and the last four ran at 92-95% of that (25,326-25,965);
+31 of 121 exceeded 85% of the cap. One went over and came back as
+`done: 27263 tokens ... (stopReason=length)` — cut off mid-summary, which triggers Pi's
+compact-and-retry: ~230k input tokens and ~10 minutes, and that window is where an
+interruption turns into a failed compaction. `reasoning` was 0 in every recorded
+compaction, so the cap is consumed by the summary itself.
+
 ## [0.2.1] - 2026-10-18
 
 ### Fixed

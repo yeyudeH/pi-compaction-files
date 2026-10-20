@@ -1,6 +1,6 @@
 {
   "name": "@yeyudeh/pi-compaction-files",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Caps Pi's compaction file lists (<read-files>/<modified-files>): drops dead, duplicate and temp paths, hides sensitive ones, strips blocks the summarizer re-seeds into the narrative, and keeps the cost per turn constant.",
   "keywords": [
     "pi",

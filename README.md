@@ -135,6 +135,12 @@ Optional file: `~/.pi/pi-compaction-files.json`
   "dropMissing": true,
   "indexRecent": 12,
   "archiveSensitive": false,
+  "compactThinking": "medium",
+  "outputBudgetRatio": 0.8,
+  "outputHardCapRatio": 0.9,
+  "retryOnOverflow": true,
+  "summaryMaxTokens": 0,
+  "summaryHardTrim": false,
   "excludePatterns": ["/tmp/", "/dev/shm/", "/node_modules/", "/.cache/", "/proc/", "/sys/"],
   "sensitivePatterns": ["/credential", "/secret", "/token", ".key", "/password", "apikey", "/.pi/agent/settings.json", "/.pi/agent/models.json"],
   "piDistDir": null
@@ -152,6 +158,12 @@ Optional file: `~/.pi/pi-compaction-files.json`
 | `dropMissing` | `true` | Drop paths that no longer exist. |
 | `archiveSensitive` | `false` | `false` also strips sensitive-shaped paths from the on-disk `details` archive. |
 | `excludePatterns` | see above | Substrings whose paths are dropped entirely. |
+| `compactThinking` | `medium` | Thinking level for the summarisation request itself instead of the session's. |
+| `outputBudgetRatio` | `0.8` | Share of Pi's own output ceiling (`0.8 * reserveTokens`) that the whole summarisation reply — reasoning **plus** summary — should fit inside. `0` disables. |
+| `outputHardCapRatio` | `0.9` | Lower the ceiling the inference server enforces for this request to this share of Pi's cap, so reasoning+summary cannot reach it. `0` leaves Pi's ceiling untouched. |
+| `retryOnOverflow` | `true` | If the reply used more than that budget, redo it once with tighter instructions and one step lower thinking; keep whichever was cheaper. |
+| `summaryMaxTokens` | `0` | Optional second ceiling on the summary text alone (chars/4). `0` = off; `outputBudgetRatio` is the primary control. |
+| `summaryHardTrim` | `false` | When the summary is still over the ceiling after the lists are tightened, cut the prose too (default: tighten lists and warn). |
 | `sensitivePatterns` | see above | Substrings whose paths are counted but never listed. **Add your own private directories here.** |
 | `piDistDir` | auto | Only needed if the self-check cannot find Pi's `dist/`. `PI_CODING_AGENT_DIST` works too. |
 
